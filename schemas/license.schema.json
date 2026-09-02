@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-app-factory.example/schemas/license.schema.json",
+  "title": "AI App Factory License",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["license_id", "plan", "status", "expires_at", "entitlements"],
+  "properties": {
+    "license_id": {"type": "string", "minLength": 8},
+    "plan": {"const": "lifetime"},
+    "status": {"enum": ["issued", "active", "suspended", "revoked"]},
+    "expires_at": {"type": ["string", "null"], "description": "Must be null for lifetime licenses."},
+    "account_id": {"type": ["string", "null"]},
+    "max_devices": {"type": "integer", "minimum": 1},
+    "max_channels": {"type": "integer", "minimum": 1},
+    "entitlements": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"}
+    },
+    "issued_at": {"type": "string", "format": "date-time"},
+    "activated_at": {"type": ["string", "null"], "format": "date-time"}
+  }
+}
