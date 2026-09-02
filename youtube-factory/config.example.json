@@ -1,0 +1,19 @@
+{
+  "channel": {
+    "default_visibility": "private",
+    "default_language": "fa"
+  },
+  "content": {
+    "format": "long_form",
+    "target_duration_minutes": 6,
+    "publish_mode": "scheduled",
+    "require_qa_pass": true,
+    "require_ai_disclosure_check": true
+  },
+  "providers": {
+    "text": "OPENAI",
+    "voice": "TTS_PROVIDER",
+    "visuals": "IMAGE_VIDEO_PROVIDER",
+    "render": "FFMPEG"
+  }
+}
