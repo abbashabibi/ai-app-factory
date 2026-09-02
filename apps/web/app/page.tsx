@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 type StageState = "done" | "active" | "waiting" | "error";
 type Stage = { key: string; title: string; state: StageState };
-type Project = { projectId: string; accountId: string; title: string; brief: string; stage: string; progress: number; createdAt: string; updatedAt: string; error: string | null };
+type Project = { projectId: string; accountId: string; title: string; brief: string; stage: string; progress: number; createdAt: string; updatedAt: string; error: string | null; execution?: { status: string; lastAIResult: unknown; lastAIAt: string | null; lastError: string | null } };
 
 const stageDefs = [
   ["IDEA", "تحلیل ایده"], ["RESEARCHED", "تحقیق و نیازمندی‌ها"], ["SCRIPTED", "طراحی و معماری"], ["ASSETS_READY", "طراحی UI/UX"],
@@ -70,13 +70,24 @@ export default function Dashboard() {
     if (!command.trim() || loading) return;
     setLoading(true);
     try {
-      const res = await fetch(`${apiBase}/api/v1/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId: "demo-account", title: command.trim(), brief: command.trim() }) });
-      if (!res.ok) throw new Error("API_ERROR");
-      setProject(await res.json());
+      const createRes = await fetch(`${apiBase}/api/v1/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId: "demo-account", title: command.trim(), brief: command.trim() }) });
+      if (!createRes.ok) throw new Error("API_ERROR");
+      const created: Project = await createRes.json();
+      setProject(created);
       setConnection("live");
       setCommand("");
-    } catch { setConnection("offline"); }
-    finally { setLoading(false); }
+
+      // Immediately hand the new project to the AI orchestrator. If the provider
+      // is not configured, the backend records the exact blocked state instead of
+      // pretending that the stage completed.
+      const aiRes = await fetch(`${apiBase}/api/v1/projects/${created.projectId}/orchestrate/ai`, { method: "POST" });
+      if (aiRes.ok) {
+        const aiPayload = await aiRes.json();
+        setProject(aiPayload.project);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "API_ERROR") setConnection("offline");
+    } finally { setLoading(false); }
   }
 
   const time = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
@@ -96,15 +107,15 @@ export default function Dashboard() {
               {index < stages.length - 1 && <div className={`flow-line ${stage.state === "done" ? "done" : ""}`} />}
             </div>)}
           </div>
-          <div className="activity"><div><b>🔵 فعالیت فعلی Agent</b><p>{project ? `در حال پردازش مرحله «${active?.title || project.stage}» و همگام‌سازی وضعیت پروژه…` : "هنوز پروژه‌ای اجرا نشده است؛ یک فرمان جدید وارد کنید."}</p></div><div className="metrics"><span>⏱ {time}</span><span>📁 وضعیت Backend</span><span>🔄 Poll: 3s</span><span>⚠️ {project?.error || "0 خطا"}</span></div></div>
+          <div className="activity"><div><b>🔵 فعالیت فعلی Agent</b><p>{project ? `در حال پردازش مرحله «${active?.title || project.stage}» و همگام‌سازی وضعیت پروژه…` : "هنوز پروژه‌ای اجرا نشده است؛ یک فرمان جدید وارد کنید."}</p></div><div className="metrics"><span>⏱ {time}</span><span>📁 Backend: {project?.execution?.status || "READY"}</span><span>🔄 Poll: 3s</span><span>⚠️ {project?.error || "0 خطا"}</span></div></div>
         </section>
         <div className="grid">
-          <section className="card wide"><div className="label">فرمان هوشمند</div><h2>چه چیزی می‌خواهید بسازید؟</h2><div className="command"><input value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && startProject()} placeholder="مثلاً یک پروژه YouTube درباره آموزش آشپزی بساز..." /><button className="primary" disabled={loading || !command.trim()} onClick={startProject}>{loading ? "در حال شروع…" : "شروع پروژه"}</button></div></section>
+          <section className="card wide"><div className="label">فرمان هوشمند</div><h2>چه چیزی می‌خواهید بسازید؟</h2><div className="command"><input value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && startProject()} placeholder="مثلاً یک پروژه YouTube درباره آموزش آشپزی بساز..." /><button className="primary" disabled={loading || !command.trim()} onClick={startProject}>{loading ? "Agent در حال اجرا…" : "شروع پروژه"}</button></div></section>
           <section className="card"><div className="label">مرحله فعلی</div><div className="value">{active?.title || (project ? "تکمیل" : "—")}</div></section>
           <section className="card"><div className="label">Project ID</div><div className="value small-value">{project?.projectId || "—"}</div></section>
           <section className="card"><div className="label">وضعیت اتصال</div><div className="value">{connection === "live" ? "زنده" : "قطع"}</div></section>
           <section className="card" id="license"><div className="label">License Center</div><h3>LIFETIME</h3><p>دستگاه‌ها: 1 / 2<br />کانال‌ها: 1 / 1</p></section>
-          <section className="card full"><div className="label">منطق مانیتورینگ</div><p>Backend وضعیت پروژه را ثبت می‌کند → Dashboard هر ۳ ثانیه وضعیت را می‌خواند → آیکن مرحله فعال می‌شود → با تغییر Stage، مرحله قبلی سبز و مرحله بعدی روشن می‌شود.</p></section>
+          <section className="card full"><div className="label">منطق اجرای واقعی</div><p>ساخت پروژه → اجرای AI Orchestrator → ثبت خروجی/خطا روی پروژه → Dashboard هر ۳ ثانیه وضعیت واقعی را می‌خواند. هیچ مرحله‌ای بدون خروجی یا Build تأییدشده به‌عنوان تکمیل‌شده علامت نمی‌خورد.</p></section>
         </div>
       </section>
     </main>
