@@ -9,6 +9,9 @@ function json(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'content-type,x-admin-api-key',
   });
   res.end(JSON.stringify(body));
 }
@@ -20,14 +23,13 @@ async function readBody(req) {
     if (raw.length > 1024 * 1024) throw new Error('PAYLOAD_TOO_LARGE');
   }
   if (!raw) return {};
-  return JSON.parse(raw);
+  try { return JSON.parse(raw); } catch { throw new Error('INVALID_REQUEST'); }
 }
 
-function pathname(req) {
-  return new URL(req.url || '/', 'http://localhost').pathname;
-}
+function pathname(req) { return new URL(req.url || '/', 'http://localhost').pathname; }
 
 const server = http.createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') return json(res, 204, {});
   const path = pathname(req);
   try {
     if (req.method === 'GET' && path === '/health') {
@@ -35,9 +37,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/api/v1/licenses/issue') {
-      if (process.env.ADMIN_API_KEY && req.headers['x-admin-api-key'] !== process.env.ADMIN_API_KEY) {
-        return json(res, 401, { error: 'UNAUTHORIZED' });
-      }
+      if (process.env.ADMIN_API_KEY && req.headers['x-admin-api-key'] !== process.env.ADMIN_API_KEY) return json(res, 401, { error: 'UNAUTHORIZED' });
       const body = await readBody(req);
       const license = issueLifetimeLicense(body);
       licenses.set(license.keyHash, license);
@@ -76,11 +76,9 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'NOT_FOUND' });
   } catch (error) {
     const known = new Set([
-      'INVALID_LICENSE', 'INVALID_REQUEST', 'LICENSE_NOT_ACTIVE',
-      'LICENSE_OWNERSHIP_MISMATCH', 'CHANNEL_LIMIT_EXCEEDED',
-      'DEVICE_LIMIT_EXCEEDED', 'INVALID_STAGE', 'INVALID_PROJECT',
-      'INVALID_PROJECT_NAME', 'STAGE_REGRESSION', 'PAYLOAD_TOO_LARGE',
-      'UNAUTHORIZED',
+      'INVALID_LICENSE', 'INVALID_REQUEST', 'LICENSE_NOT_ACTIVE', 'LICENSE_OWNERSHIP_MISMATCH',
+      'CHANNEL_LIMIT_EXCEEDED', 'DEVICE_LIMIT_EXCEEDED', 'INVALID_STAGE', 'INVALID_PROJECT',
+      'INVALID_PROJECT_NAME', 'STAGE_REGRESSION', 'PAYLOAD_TOO_LARGE', 'UNAUTHORIZED',
     ]);
     const status = error.message === 'UNAUTHORIZED' ? 401 : error.message === 'PAYLOAD_TOO_LARGE' ? 413 : known.has(error.message) ? 400 : 500;
     return json(res, status, { error: known.has(error.message) ? error.message : 'INTERNAL_ERROR' });
