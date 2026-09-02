@@ -47,7 +47,23 @@ export function validateSourceManifest(manifest) {
   return { files, summary: typeof manifest.summary === 'string' ? manifest.summary : '' };
 }
 
+function mockSourceManifest() {
+  return validateSourceManifest({
+    summary: 'Deterministic E2E Android project used only for pipeline verification.',
+    files: [
+      { path: 'settings.gradle', content: "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = 'E2EApp'\ninclude ':app'\n" },
+      { path: 'build.gradle', content: "plugins { id 'com.android.application' version '8.7.3' apply false }\n" },
+      { path: 'app/build.gradle', content: "plugins { id 'com.android.application' }\n\nandroid { namespace 'com.example.e2e'; compileSdk 35\n    defaultConfig { applicationId 'com.example.e2e'; minSdk 23; targetSdk 35; versionCode 1; versionName '1.0' }\n}\n" },
+      { path: 'app/src/main/AndroidManifest.xml', content: "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/AppTheme\" android:label=\"AI App Factory E2E\"><activity android:name=\".MainActivity\" android:exported=\"true\"><intent-filter><action android:name=\"android.intent.action.MAIN\"/><category android:name=\"android.intent.category.LAUNCHER\"/></intent-filter></activity></application></manifest>" },
+      { path: 'app/src/main/java/com/example/e2e/MainActivity.java', content: "package com.example.e2e;\nimport android.app.Activity;\nimport android.os.Bundle;\nimport android.widget.TextView;\npublic class MainActivity extends Activity { @Override public void onCreate(Bundle state) { super.onCreate(state); TextView view = new TextView(this); view.setText(\"AI App Factory E2E\"); setContentView(view); } }\n" },
+      { path: 'app/src/main/res/values/styles.xml', content: "<resources><style name=\"AppTheme\" parent=\"android:style/Theme.Material.Light.NoActionBar\"/></resources>" }
+    ]
+  });
+}
+
 export async function generateSource({ title, brief, plan, model = DEFAULT_MODEL, fetchImpl = fetch }) {
+  if (process.env.APP_FACTORY_E2E_MODE === '1') return mockSourceManifest();
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new AIProviderError('AI_PROVIDER_NOT_CONFIGURED', 'AI_PROVIDER_NOT_CONFIGURED');
 
