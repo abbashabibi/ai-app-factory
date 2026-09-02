@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { triggerCodemagicBuild, CodemagicError } from '../src/codemagic-service.mjs';
+import { triggerCodemagicBuild, getCodemagicBuildStatus, CodemagicError } from '../src/codemagic-service.mjs';
 
 test('Codemagic provider rejects missing configuration without a network call', async () => {
   const oldToken = process.env.CODEMAGIC_API_TOKEN;
@@ -27,5 +27,21 @@ test('Codemagic provider sends the documented build request and returns buildId'
     }
   });
   assert.equal(result.buildId, 'build-123');
+  delete process.env.CODEMAGIC_API_TOKEN;
+});
+
+test('Codemagic status reads v3 data.status and classifies terminal states', async () => {
+  process.env.CODEMAGIC_API_TOKEN = 'cm-test';
+  const result = await getCodemagicBuildStatus('build-123', {
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'https://codemagic.io/api/v3/builds/build-123');
+      assert.equal(options.headers['x-auth-token'], 'cm-test');
+      return { ok: true, json: async () => ({ data: { status: 'finished', artifacts: [{ name: 'app-debug.apk' }] } }) };
+    }
+  });
+  assert.equal(result.status, 'finished');
+  assert.equal(result.finished, true);
+  assert.equal(result.failed, false);
+  assert.equal(result.artifacts[0].name, 'app-debug.apk');
   delete process.env.CODEMAGIC_API_TOKEN;
 });
