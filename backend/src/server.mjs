@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { issueLifetimeLicense, activateLicense, hashLicenseKey, publicLicense } from './license-service.mjs';
 import { createProject, advanceProject } from './project-service.mjs';
+import { createExecutionPlan, assertStageCompletion } from './orchestrator-service.mjs';
 
 const licenses = new Map();
 const projects = new Map();
@@ -33,7 +34,7 @@ const server = http.createServer(async (req, res) => {
   const path = pathname(req);
   try {
     if (req.method === 'GET' && path === '/health') {
-      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.1.0' });
+      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.2.0', orchestrator: true });
     }
 
     if (req.method === 'POST' && path === '/api/v1/licenses/issue') {
@@ -55,6 +56,26 @@ const server = http.createServer(async (req, res) => {
       const project = createProject(body);
       projects.set(project.projectId, project);
       return json(res, 201, project);
+    }
+
+    const orchestrateMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/orchestrate$/);
+    if (req.method === 'POST' && orchestrateMatch) {
+      const project = projects.get(orchestrateMatch[1]);
+      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });
+      return json(res, 200, createExecutionPlan(project));
+    }
+
+    const completeMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/orchestrate\/complete$/);
+    if (req.method === 'POST' && completeMatch) {
+      const body = await readBody(req);
+      const project = projects.get(completeMatch[1]);
+      const completion = assertStageCompletion(project, body.stage);
+      if (completion.nextStage) {
+        const updated = advanceProject(project, completion.nextStage);
+        projects.set(updated.projectId, updated);
+        return json(res, 200, { project: updated, execution: createExecutionPlan(updated) });
+      }
+      return json(res, 200, { project, execution: createExecutionPlan(project) });
     }
 
     const advanceMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/advance$/);
@@ -79,6 +100,7 @@ const server = http.createServer(async (req, res) => {
       'INVALID_LICENSE', 'INVALID_REQUEST', 'LICENSE_NOT_ACTIVE', 'LICENSE_OWNERSHIP_MISMATCH',
       'CHANNEL_LIMIT_EXCEEDED', 'DEVICE_LIMIT_EXCEEDED', 'INVALID_STAGE', 'INVALID_PROJECT',
       'INVALID_PROJECT_NAME', 'STAGE_REGRESSION', 'PAYLOAD_TOO_LARGE', 'UNAUTHORIZED',
+      'ORCHESTRATOR_STAGE_MISMATCH',
     ]);
     const status = error.message === 'UNAUTHORIZED' ? 401 : error.message === 'PAYLOAD_TOO_LARGE' ? 413 : known.has(error.message) ? 400 : 500;
     return json(res, status, { error: known.has(error.message) ? error.message : 'INTERNAL_ERROR' });
