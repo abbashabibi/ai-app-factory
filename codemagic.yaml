@@ -3,21 +3,17 @@ workflows:
     name: Android Debug APK
     max_build_duration: 30
     environment:
-      groups:
-        - app_factory
       vars:
         PACKAGE_NAME: "com.abbas.appfactory"
     scripts:
       - name: Check project
         script: |
           set -e
-          cd apps/android
           test -f settings.gradle
           test -d app
       - name: Build APK
         script: |
           set -e
-          cd apps/android
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
@@ -25,4 +21,4 @@ workflows:
             gradle assembleDebug
           fi
     artifacts:
-      - apps/android/app/build/outputs/apk/**/*.apk
+      - app/build/outputs/apk/**/*.apk
