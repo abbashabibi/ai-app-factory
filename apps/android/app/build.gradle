@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.abbas.appfactory'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.abbas.appfactory'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        debug { minifyEnabled false }
+        release { minifyEnabled false; debuggable false }
+    }
+}
