@@ -52,3 +52,26 @@ export async function getCodemagicBuildStatus(buildId, { fetchImpl = fetch } = {
     raw: build,
   };
 }
+
+export async function createCodemagicPublicArtifactUrl(artifactUrl, { expiresAt, fetchImpl = fetch } = {}) {
+  if (!artifactUrl || typeof artifactUrl !== 'string') throw new CodemagicError('CODEMAGIC_ARTIFACT_URL_MISSING', 'CODEMAGIC_ARTIFACT_URL_MISSING');
+  const parsed = new URL(artifactUrl);
+  const allowedHost = new URL(CODEMAGIC_API).host;
+  if (parsed.host !== allowedHost || !parsed.pathname.startsWith('/artifacts/')) {
+    throw new CodemagicError('CODEMAGIC_ARTIFACT_URL_INVALID', 'CODEMAGIC_ARTIFACT_URL_INVALID');
+  }
+  const token = requireConfig();
+  const timestamp = Number(expiresAt || Math.floor(Date.now() / 1000) + 24 * 60 * 60);
+  if (!Number.isFinite(timestamp) || timestamp <= Math.floor(Date.now() / 1000)) {
+    throw new CodemagicError('CODEMAGIC_ARTIFACT_EXPIRY_INVALID', 'CODEMAGIC_ARTIFACT_EXPIRY_INVALID');
+  }
+  const response = await fetchImpl(`${artifactUrl.replace(/\/$/, '')}/public-url`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ expiresAt: Math.floor(timestamp) }),
+  });
+  if (!response.ok) throw new CodemagicError(`CODEMAGIC_HTTP_${response.status}`);
+  const data = await response.json();
+  if (!data?.url) throw new CodemagicError('CODEMAGIC_PUBLIC_URL_MISSING', 'CODEMAGIC_PUBLIC_URL_MISSING');
+  return { url: data.url, expiresAt: data.expiresAt || new Date(Math.floor(timestamp) * 1000).toISOString() };
+}
