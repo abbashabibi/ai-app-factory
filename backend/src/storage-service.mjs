@@ -50,30 +50,26 @@ export async function listProjects(accountId) {
 
 export async function hydrateProjects(target) {
   if (!pool) return target;
-  const projects = await listProjectsForHydration();
-  for (const project of projects) target.set(project.projectId, project, { persist: false });
-  return target;
-}
-
-async function listProjectsForHydration() {
   const { rows } = await pool.query(`SELECT state FROM projects ORDER BY updated_at DESC`);
-  return rows.map((r) => r.state);
+  for (const row of rows) target.set(row.state.projectId, row.state, { persist: false });
+  return target;
 }
 
 export function createPersistentProjectMap() {
   const backing = new Map();
-  return {
+  const api = {
     get: (key) => backing.get(key),
     set: (key, value, options = {}) => {
       backing.set(key, value);
       if (options.persist !== false) void saveProject(value).catch((error) => console.error('PROJECT_PERSISTENCE_ERROR', error.code || error.message));
-      return this;
+      return api;
     },
     has: (key) => backing.has(key),
     values: () => backing.values(),
     entries: () => backing.entries(),
     [Symbol.iterator]: () => backing[Symbol.iterator](),
   };
+  return api;
 }
 
 export async function closeStorage() { if (pool) await pool.end(); }
