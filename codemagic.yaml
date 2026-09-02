@@ -5,15 +5,19 @@ workflows:
     environment:
       vars:
         PACKAGE_NAME: "com.abbas.appfactory"
+        PROJECT_ROOT: "."
     scripts:
       - name: Check project
         script: |
           set -e
-          test -f settings.gradle
-          test -d app
+          PROJECT_ROOT="${PROJECT_ROOT:-.}"
+          test -f "$PROJECT_ROOT/settings.gradle"
+          test -d "$PROJECT_ROOT/app"
       - name: Build APK
         script: |
           set -e
+          PROJECT_ROOT="${PROJECT_ROOT:-.}"
+          cd "$PROJECT_ROOT"
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
@@ -21,4 +25,4 @@ workflows:
             gradle assembleDebug
           fi
     artifacts:
-      - app/build/outputs/apk/**/*.apk
+      - $PROJECT_ROOT/app/build/outputs/apk/**/*.apk
