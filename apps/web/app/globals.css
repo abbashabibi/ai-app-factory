@@ -10,17 +10,42 @@ button, input { font: inherit; }
 .nav a { color: #aeb8ca; text-decoration: none; padding: 12px 14px; border-radius: 12px; }
 .nav a:hover, .nav a.active { background: #151d2d; color: #fff; }
 .main { padding: 28px; max-width: 1500px; width: 100%; margin: auto; }
-.top { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 28px; }
+.top { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 22px; }
 .eyebrow { color: #7f8ba3; font-size: 13px; }
 h1 { font-size: clamp(28px, 4vw, 46px); margin: 6px 0 0; }
-.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+h2 { margin: 7px 0; }
+.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-top: 16px; }
 .card { grid-column: span 4; padding: 22px; border: 1px solid #20283a; border-radius: 18px; background: linear-gradient(145deg,#101728,#0b111e); }
 .card.wide { grid-column: span 8; }
 .card.full { grid-column: 1 / -1; }
 .label { color: #8e9ab0; font-size: 13px; }
 .value { font-size: 30px; font-weight: 800; margin-top: 8px; }
+.badge { display: inline-flex; padding: 7px 10px; border-radius: 999px; background: #142a25; color: #7fe0b6; font-size: 12px; font-weight: 700; }
+.monitor { padding: 24px; }
+.monitor-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.progress-number { font-size: 32px; font-weight: 900; }
+.progress { height: 9px; background: #1a2232; border-radius: 999px; overflow: hidden; margin: 18px 0; }
+.progress span { display: block; height: 100%; background: #7fe0b6; border-radius: inherit; transition: width .4s ease; }
+.stage-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.stage { display: flex; align-items: center; gap: 10px; min-height: 70px; padding: 12px; border: 1px solid #20283a; border-radius: 14px; background: #0a101c; }
+.stage-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: #1b2435; color: #9ba7bb; font-weight: 800; flex: 0 0 auto; }
+.stage.done .stage-icon { background: #18362b; color: #7fe0b6; }
+.stage.active { border-color: #7fe0b6; box-shadow: 0 0 0 1px #7fe0b633; }
+.stage.active .stage-icon { background: #7fe0b6; color: #07100d; }
+.stage-info { min-width: 0; flex: 1; }
+.stage-info strong, .stage-info small { display: block; }
+.stage-info small { color: #69768e; margin-top: 4px; font-size: 10px; }
+.stage-status { font-size: 11px; color: #77849a; white-space: nowrap; }
+.stage.done .stage-status { color: #7fe0b6; }
+.stage.active .stage-status { color: #fff; }
+.activity { display: flex; justify-content: space-between; gap: 20px; margin-top: 18px; padding-top: 18px; border-top: 1px solid #20283a; }
+.activity p { color: #aeb8ca; margin: 7px 0 0; }
+.metrics { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.metrics span { padding: 7px 10px; border-radius: 10px; background: #151d2d; color: #aeb8ca; font-size: 12px; }
 .command { display: flex; gap: 10px; margin-top: 18px; }
 .command input { flex: 1; min-width: 0; border: 1px solid #2a344b; background: #080d18; color: white; border-radius: 12px; padding: 14px; }
 .primary { border: 0; background: #fff; color: #080d18; border-radius: 12px; padding: 0 18px; font-weight: 800; cursor: pointer; }
-.badge { display: inline-flex; padding: 7px 10px; border-radius: 999px; background: #142a25; color: #7fe0b6; font-size: 12px; font-weight: 700; }
-@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { border-left: 0; border-bottom: 1px solid #20283a; } .nav { display: flex; overflow-x: auto; } .card, .card.wide { grid-column: 1 / -1; } .main { padding: 18px; } }
+.primary:hover { transform: translateY(-1px); }
+@media (max-width: 1050px) { .stage-list { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { border-left: 0; border-bottom: 1px solid #20283a; } .nav { display: flex; overflow-x: auto; } .card, .card.wide { grid-column: 1 / -1; } .main { padding: 18px; } .activity { flex-direction: column; } .metrics { justify-content: flex-start; } }
+@media (max-width: 560px) { .stage-list { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .command { flex-direction: column; } .primary { min-height: 46px; } }
