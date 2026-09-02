@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 type StageState = "done" | "active" | "waiting" | "error";
+type BuildInfo = { buildId: string; appId?: string; workflowId?: string; branch?: string; status?: string; finished?: boolean; failed?: boolean; artifacts?: Array<{ name?: string; type?: string; url?: string }> };
+type Project = { projectId: string; accountId: string; title: string; brief: string; stage: string; progress: number; createdAt: string; updatedAt: string; error: string | null; execution?: { status: string; lastAIResult: unknown; lastAIAt: string | null; lastError: string | null; build?: BuildInfo } };
 type Stage = { key: string; title: string; state: StageState };
-type Project = { projectId: string; accountId: string; title: string; brief: string; stage: string; progress: number; createdAt: string; updatedAt: string; error: string | null; execution?: { status: string; lastAIResult: unknown; lastAIAt: string | null; lastError: string | null } };
 
 const stageDefs = [
   ["IDEA", "تحلیل ایده"], ["RESEARCHED", "تحقیق و نیازمندی‌ها"], ["SCRIPTED", "طراحی و معماری"], ["ASSETS_READY", "طراحی UI/UX"],
@@ -31,16 +32,23 @@ function buildStages(project: Project | null): Stage[] {
   return stageDefs.map(([key, title], index) => ({ key, title, state: project?.error && index === current ? "error" : index < current ? "done" : index === current ? "active" : "waiting" }));
 }
 
+function isBuildRunning(build?: BuildInfo) {
+  return Boolean(build && !build.finished && !build.failed);
+}
+
 export default function Dashboard() {
   const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
   const [project, setProject] = useState<Project | null>(null);
   const [command, setCommand] = useState("");
   const [loading, setLoading] = useState(false);
+  const [buildLoading, setBuildLoading] = useState(false);
   const [connection, setConnection] = useState<"live" | "offline">("offline");
   const [elapsed, setElapsed] = useState(0);
+  const [buildMessage, setBuildMessage] = useState("");
 
   const stages = useMemo(() => buildStages(project), [project]);
   const progress = project?.progress ?? 0;
+  const build = project?.execution?.build;
 
   useEffect(() => {
     if (!project) return;
@@ -66,6 +74,25 @@ export default function Dashboard() {
     return () => window.clearInterval(timer);
   }, [apiBase, project?.projectId]);
 
+  useEffect(() => {
+    if (!project?.projectId || !build?.buildId || !isBuildRunning(build)) return;
+    let cancelled = false;
+    const pollBuild = async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/v1/projects/${project.projectId}/build/${build.buildId}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const next: BuildInfo = await res.json();
+        if (!cancelled) {
+          setProject((current) => current ? { ...current, execution: { ...(current.execution || { status: "READY", lastAIResult: null, lastAIAt: null, lastError: null }), build: next } } : current);
+          setBuildMessage(next.finished ? "Build با موفقیت تمام شد." : next.failed ? "Build با خطا متوقف شد." : "Codemagic در حال ساخت APK است…");
+        }
+      } catch { /* main project polling still reports connectivity */ }
+    };
+    pollBuild();
+    const timer = window.setInterval(pollBuild, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [apiBase, project?.projectId, build?.buildId, build?.status, build?.finished, build?.failed]);
+
   async function startProject() {
     if (!command.trim() || loading) return;
     setLoading(true);
@@ -76,10 +103,6 @@ export default function Dashboard() {
       setProject(created);
       setConnection("live");
       setCommand("");
-
-      // Immediately hand the new project to the AI orchestrator. If the provider
-      // is not configured, the backend records the exact blocked state instead of
-      // pretending that the stage completed.
       const aiRes = await fetch(`${apiBase}/api/v1/projects/${created.projectId}/orchestrate/ai`, { method: "POST" });
       if (aiRes.ok) {
         const aiPayload = await aiRes.json();
@@ -90,8 +113,25 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   }
 
+  async function startBuild() {
+    if (!project?.projectId || buildLoading || isBuildRunning(build)) return;
+    setBuildLoading(true);
+    setBuildMessage("");
+    try {
+      const res = await fetch(`${apiBase}/api/v1/projects/${project.projectId}/build`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "BUILD_ERROR");
+      setProject(payload.project);
+      setBuildMessage("Build در Codemagic صف شد؛ وضعیت به‌صورت زنده پیگیری می‌شود.");
+    } catch (error) {
+      setBuildMessage(error instanceof Error ? `خطا: ${error.message}` : "خطای ناشناخته در شروع Build");
+    } finally { setBuildLoading(false); }
+  }
+
   const time = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
   const active = stages.find((s) => s.state === "active");
+  const canBuild = project?.stage === "QA_PASSED" || project?.stage === "UPLOADED" || project?.stage === "ANALYZED";
+  const buildLabel = buildLoading ? "در حال ارسال…" : isBuildRunning(build) ? "در حال Build…" : build?.finished ? "Build دوباره" : "ساخت APK";
 
   return (
     <main className="shell">
@@ -115,7 +155,8 @@ export default function Dashboard() {
           <section className="card"><div className="label">Project ID</div><div className="value small-value">{project?.projectId || "—"}</div></section>
           <section className="card"><div className="label">وضعیت اتصال</div><div className="value">{connection === "live" ? "زنده" : "قطع"}</div></section>
           <section className="card" id="license"><div className="label">License Center</div><h3>LIFETIME</h3><p>دستگاه‌ها: 1 / 2<br />کانال‌ها: 1 / 1</p></section>
-          <section className="card full"><div className="label">منطق اجرای واقعی</div><p>ساخت پروژه → اجرای AI Orchestrator → ثبت خروجی/خطا روی پروژه → Dashboard هر ۳ ثانیه وضعیت واقعی را می‌خواند. هیچ مرحله‌ای بدون خروجی یا Build تأییدشده به‌عنوان تکمیل‌شده علامت نمی‌خورد.</p></section>
+          <section className="card full" id="build"><div className="label">ANDROID BUILD CENTER</div><div className="build-row"><div><h2>{build ? `Build #${build.buildId}` : "ساخت APK"}</h2><p>{buildMessage || (build ? `وضعیت Codemagic: ${build.status || "queued"}` : "پس از آماده‌شدن QA، Build واقعی را به Codemagic ارسال کنید.")}</p>{build?.artifacts?.length ? <p>Artifact: {build.artifacts.map((a) => a.name || a.type || "artifact").join("، ")}</p> : null}</div><button className="primary" disabled={!canBuild || buildLoading || isBuildRunning(build)} onClick={startBuild}>{buildLabel}</button></div></section>
+          <section className="card full"><div className="label">منطق اجرای واقعی</div><p>ساخت پروژه → اجرای AI Orchestrator → ثبت خروجی/خطا → QA → ارسال Build به Codemagic → Poll وضعیت Build → نمایش Artifact. هیچ APK جعلی یا لینک ساختگی نمایش داده نمی‌شود.</p></section>
         </div>
       </section>
     </main>
