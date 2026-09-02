@@ -79,7 +79,8 @@ const server = http.createServer(async (req, res) => {
       'INVALID_LICENSE', 'INVALID_REQUEST', 'LICENSE_NOT_ACTIVE',
       'LICENSE_OWNERSHIP_MISMATCH', 'CHANNEL_LIMIT_EXCEEDED',
       'DEVICE_LIMIT_EXCEEDED', 'INVALID_STAGE', 'INVALID_PROJECT',
-      'INVALID_PROJECT_NAME', 'PAYLOAD_TOO_LARGE', 'UNAUTHORIZED',
+      'INVALID_PROJECT_NAME', 'STAGE_REGRESSION', 'PAYLOAD_TOO_LARGE',
+      'UNAUTHORIZED',
     ]);
     const status = error.message === 'UNAUTHORIZED' ? 401 : error.message === 'PAYLOAD_TOO_LARGE' ? 413 : known.has(error.message) ? 400 : 500;
     return json(res, status, { error: known.has(error.message) ? error.message : 'INTERNAL_ERROR' });
