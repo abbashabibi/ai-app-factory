@@ -1,21 +1,15 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class AuthError extends Error {
-  constructor(message, code = 'AUTH_ERROR') {
-    super(message);
-    this.name = 'AuthError';
-    this.code = code;
-  }
+  constructor(message, code = 'AUTH_ERROR') { super(message); this.name = 'AuthError'; this.code = code; }
 }
 
 export async function hashPassword(password) {
-  if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
-    throw new AuthError('PASSWORD_INVALID', 'PASSWORD_INVALID');
-  }
+  if (typeof password !== 'string' || password.length < 8 || password.length > 200) throw new AuthError('PASSWORD_INVALID', 'PASSWORD_INVALID');
   const salt = randomBytes(16);
   const derived = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 });
   return `${salt.toString('base64url')}.${Buffer.from(derived).toString('base64url')}`;
@@ -30,9 +24,7 @@ export async function verifyPassword(password, encoded) {
     const expected = Buffer.from(hashText, 'base64url');
     const actual = Buffer.from(await scrypt(password, salt, expected.length || 64, { N: 16384, r: 8, p: 1 }));
     return actual.length === expected.length && timingSafeEqual(actual, expected);
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 export function normalizeEmail(email) {
@@ -44,14 +36,7 @@ export function normalizeEmail(email) {
 
 export function createAccountRecord({ email, passwordHash, name = '' } = {}) {
   if (!passwordHash) throw new AuthError('PASSWORD_HASH_MISSING', 'PASSWORD_HASH_MISSING');
-  return {
-    accountId: `acct_${randomBytes(10).toString('hex')}`,
-    email: normalizeEmail(email),
-    name: typeof name === 'string' ? name.trim().slice(0, 120) : '',
-    passwordHash,
-    status: 'ACTIVE',
-    createdAt: new Date().toISOString(),
-  };
+  return { accountId: `acct_${randomBytes(10).toString('hex')}`, email: normalizeEmail(email), name: typeof name === 'string' ? name.trim().slice(0, 120) : '', passwordHash, status: 'ACTIVE', createdAt: new Date().toISOString() };
 }
 
 export function publicAccount(account) {
@@ -62,7 +47,20 @@ export function publicAccount(account) {
 export function signSession(accountId, secret = process.env.SESSION_SECRET) {
   if (!secret || secret.length < 32) throw new AuthError('SESSION_SECRET_NOT_CONFIGURED', 'SESSION_SECRET_NOT_CONFIGURED');
   const payload = Buffer.from(JSON.stringify({ sub: accountId, iat: Date.now(), exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString('base64url');
-  const { createHmac } = require('node:crypto');
   const signature = createHmac('sha256', secret).update(payload).digest('base64url');
   return `${payload}.${signature}`;
+}
+
+export function verifySession(token, secret = process.env.SESSION_SECRET) {
+  if (!secret || secret.length < 32 || typeof token !== 'string') return null;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+  const expected = createHmac('sha256', secret).update(payload).digest('base64url');
+  try {
+    const a = Buffer.from(signature); const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data?.sub || !Number.isFinite(data.exp) || data.exp <= Date.now()) return null;
+    return { accountId: data.sub, expiresAt: data.exp };
+  } catch { return null; }
 }
