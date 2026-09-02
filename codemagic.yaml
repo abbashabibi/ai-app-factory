@@ -10,11 +10,14 @@ workflows:
     scripts:
       - name: Check project
         script: |
-          echo "Checking Android project..."
-          test -f settings.gradle.kts || test -f settings.gradle
+          set -e
+          cd apps/android
+          test -f settings.gradle
           test -d app
       - name: Build APK
         script: |
+          set -e
+          cd apps/android
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
@@ -22,4 +25,4 @@ workflows:
             gradle assembleDebug
           fi
     artifacts:
-      - app/build/outputs/apk/**/*.apk
+      - apps/android/app/build/outputs/apk/**/*.apk
