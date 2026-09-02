@@ -3,6 +3,7 @@ import { issueLifetimeLicense, activateLicense, hashLicenseKey, publicLicense } 
 import { createProject, advanceProject, recordAIResult, recordExecutionError } from './project-service.mjs';
 import { createExecutionPlan, assertStageCompletion } from './orchestrator-service.mjs';
 import { generateAIPlan } from './ai-provider.mjs';
+import { generateSource } from './source-generator.mjs';
 import { triggerCodemagicBuild, getCodemagicBuildStatus, createCodemagicPublicArtifactUrl } from './codemagic-service.mjs';
 import { commitFiles } from './github-service.mjs';
 
@@ -37,7 +38,7 @@ const server = http.createServer(async (req, res) => {
   const path = pathname(req);
   try {
     if (req.method === 'GET' && path === '/health') {
-      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.8.0', orchestrator: true, aiProvider: Boolean(process.env.OPENAI_API_KEY), buildProvider: Boolean(process.env.CODEMAGIC_API_TOKEN && process.env.CODEMAGIC_APP_ID), sourceProvider: Boolean(process.env.GITHUB_TOKEN) });
+      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.9.0', orchestrator: true, aiProvider: Boolean(process.env.OPENAI_API_KEY), buildProvider: Boolean(process.env.CODEMAGIC_API_TOKEN && process.env.CODEMAGIC_APP_ID), sourceProvider: Boolean(process.env.GITHUB_TOKEN) });
     }
     if (req.method === 'POST' && path === '/api/v1/licenses/issue') {
       if (process.env.ADMIN_API_KEY && req.headers['x-admin-api-key'] !== process.env.ADMIN_API_KEY) return json(res, 401, { error: 'UNAUTHORIZED' });
@@ -75,6 +76,24 @@ const server = http.createServer(async (req, res) => {
         throw error;
       }
     }
+    const sourceGenerateMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/source\/generate$/);
+    if (req.method === 'POST' && sourceGenerateMatch) {
+      const project = projects.get(sourceGenerateMatch[1]);
+      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });
+      if (project.stage !== 'ASSETS_READY') return json(res, 400, { error: 'SOURCE_REQUIRES_UI_SPEC' });
+      try {
+        const result = await generateSource({ title: project.title, brief: project.brief, plan: project.execution?.lastAIResult || {} });
+        project.execution = { ...(project.execution || {}), sourceDraft: result, status: 'SOURCE_READY', lastError: null };
+        project.updatedAt = new Date().toISOString();
+        project.error = null;
+        projects.set(project.projectId, project);
+        return json(res, 200, { project, source: result });
+      } catch (error) {
+        const updated = recordExecutionError(project, error.code || error.message || 'SOURCE_GENERATION_ERROR');
+        projects.set(updated.projectId, updated);
+        throw error;
+      }
+    }
     const sourceCommitMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/source\/commit$/);
     if (req.method === 'POST' && sourceCommitMatch) {
       const project = projects.get(sourceCommitMatch[1]);
@@ -82,9 +101,10 @@ const server = http.createServer(async (req, res) => {
       if (project.stage !== 'ASSETS_READY') return json(res, 400, { error: 'SOURCE_REQUIRES_UI_SPEC' });
       const body = await readBody(req);
       const repository = process.env.GITHUB_REPOSITORY || body.repository;
+      const files = body.files || project.execution?.sourceDraft?.files;
       if (!repository || (process.env.GITHUB_REPOSITORY && body.repository && body.repository !== process.env.GITHUB_REPOSITORY)) return json(res, 400, { error: 'GITHUB_REPOSITORY_NOT_ALLOWED' });
-      if (!Array.isArray(body.files) || body.files.length > 50) return json(res, 400, { error: 'GITHUB_FILES_MISSING' });
-      const result = await commitFiles({ repository, branch: body.branch || 'main', message: body.message || `feat: generate source for ${project.projectId}`, files: body.files });
+      if (!Array.isArray(files) || files.length > 50) return json(res, 400, { error: 'GITHUB_FILES_MISSING' });
+      const result = await commitFiles({ repository, branch: body.branch || 'main', message: body.message || `feat: generate source for ${project.projectId}`, files });
       project.execution = { ...(project.execution || {}), source: result, status: 'SOURCE_COMMITTED', lastError: null };
       advanceProject(project, 'RENDERED');
       project.execution.status = 'SOURCE_COMMITTED';
@@ -98,13 +118,7 @@ const server = http.createServer(async (req, res) => {
       if (!['QA_PASSED', 'UPLOADED', 'ANALYZED'].includes(project.stage)) return json(res, 400, { error: 'BUILD_REQUIRES_QA' });
       const body = await readBody(req);
       const environment = body.projectRoot ? { variables: { PROJECT_ROOT: String(body.projectRoot) } } : undefined;
-      const build = await triggerCodemagicBuild({
-        appId: body.appId,
-        workflowId: body.workflowId,
-        branch: body.branch || 'main',
-        environment,
-        labels: ['ai-app-factory', project.projectId],
-      });
+      const build = await triggerCodemagicBuild({ appId: body.appId, workflowId: body.workflowId, branch: body.branch || 'main', environment, labels: ['ai-app-factory', project.projectId] });
       project.execution = { ...(project.execution || {}), build: { ...build, status: 'queued', finished: false, failed: false, artifacts: [] }, status: 'BUILD_QUEUED', lastError: null };
       project.updatedAt = new Date().toISOString();
       project.error = null;
@@ -168,7 +182,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 404, { error: 'NOT_FOUND' });
   } catch (error) {
-    const known = new Set(['INVALID_LICENSE','INVALID_REQUEST','LICENSE_NOT_ACTIVE','LICENSE_OWNERSHIP_MISMATCH','CHANNEL_LIMIT_EXCEEDED','DEVICE_LIMIT_EXCEEDED','INVALID_STAGE','INVALID_PROJECT','INVALID_PROJECT_NAME','STAGE_REGRESSION','PAYLOAD_TOO_LARGE','UNAUTHORIZED','ORCHESTRATOR_STAGE_MISMATCH','AI_PROVIDER_NOT_CONFIGURED','AI_PROVIDER_ERROR','AI_EMPTY_RESPONSE','AI_INVALID_JSON','AI_TIMEOUT','AI_NETWORK_ERROR','CODEMAGIC_NOT_CONFIGURED','CODEMAGIC_BUILD_ID_MISSING','CODEMAGIC_STATUS_MISSING','CODEMAGIC_ARTIFACT_URL_MISSING','CODEMAGIC_ARTIFACT_URL_INVALID','CODEMAGIC_ARTIFACT_EXPIRY_INVALID','CODEMAGIC_PUBLIC_URL_MISSING','BUILD_REQUIRES_QA','BUILD_NOT_FINISHED','GITHUB_NOT_CONFIGURED','GITHUB_INVALID_REPOSITORY','GITHUB_COMMIT_MESSAGE_MISSING','GITHUB_FILES_MISSING','GITHUB_FILE_CONTENT_MISSING','GITHUB_INVALID_FILE_PATH','GITHUB_PARENT_SHA_MISSING','GITHUB_BASE_TREE_MISSING','GITHUB_BLOB_SHA_MISSING','GITHUB_TREE_SHA_MISSING','GITHUB_COMMIT_SHA_MISSING','GITHUB_REF_UPDATE_FAILED','GITHUB_REPOSITORY_NOT_ALLOWED','SOURCE_REQUIRES_UI_SPEC']);
+    const known = new Set(['INVALID_LICENSE','INVALID_REQUEST','LICENSE_NOT_ACTIVE','LICENSE_OWNERSHIP_MISMATCH','CHANNEL_LIMIT_EXCEEDED','DEVICE_LIMIT_EXCEEDED','INVALID_STAGE','INVALID_PROJECT','INVALID_PROJECT_NAME','STAGE_REGRESSION','PAYLOAD_TOO_LARGE','UNAUTHORIZED','ORCHESTRATOR_STAGE_MISMATCH','AI_PROVIDER_NOT_CONFIGURED','AI_PROVIDER_ERROR','AI_EMPTY_RESPONSE','AI_INVALID_JSON','AI_TIMEOUT','AI_NETWORK_ERROR','CODEMAGIC_NOT_CONFIGURED','CODEMAGIC_BUILD_ID_MISSING','CODEMAGIC_STATUS_MISSING','CODEMAGIC_ARTIFACT_URL_MISSING','CODEMAGIC_ARTIFACT_URL_INVALID','CODEMAGIC_ARTIFACT_EXPIRY_INVALID','CODEMAGIC_PUBLIC_URL_MISSING','BUILD_REQUIRES_QA','BUILD_NOT_FINISHED','GITHUB_NOT_CONFIGURED','GITHUB_INVALID_REPOSITORY','GITHUB_COMMIT_MESSAGE_MISSING','GITHUB_FILES_MISSING','GITHUB_FILE_CONTENT_MISSING','GITHUB_INVALID_FILE_PATH','GITHUB_PARENT_SHA_MISSING','GITHUB_BASE_TREE_MISSING','GITHUB_BLOB_SHA_MISSING','GITHUB_TREE_SHA_MISSING','GITHUB_COMMIT_SHA_MISSING','GITHUB_REF_UPDATE_FAILED','GITHUB_REPOSITORY_NOT_ALLOWED','SOURCE_REQUIRES_UI_SPEC','SOURCE_INVALID_MANIFEST','SOURCE_FILE_COUNT_INVALID','SOURCE_DUPLICATE_PATH','SOURCE_INVALID_FILE_PATH','SOURCE_FILE_CONTENT_MISSING','SOURCE_FILE_TOO_LARGE','SOURCE_TOTAL_SIZE_TOO_LARGE']);
     const code = error.code || error.message;
     const status = code === 'UNAUTHORIZED' ? 401 : code === 'PAYLOAD_TOO_LARGE' ? 413 : known.has(code) ? 400 : 500;
     return json(res, status, { error: known.has(code) ? code : 'INTERNAL_ERROR' });
