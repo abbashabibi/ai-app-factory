@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 const GITHUB_API = process.env.GITHUB_API_URL || 'https://api.github.com';
 
 export class GitHubServiceError extends Error {
@@ -43,6 +45,19 @@ export async function commitFiles({ repository, branch = 'main', message, files,
   for (const file of files) {
     assertPath(file?.path);
     if (typeof file?.content !== 'string') throw new GitHubServiceError('GITHUB_FILE_CONTENT_MISSING', 'GITHUB_FILE_CONTENT_MISSING');
+  }
+
+  if (process.env.APP_FACTORY_E2E_MODE === '1') {
+    const seed = `${repository}:${branch}:${message}:${files.length}:${Date.now()}`;
+    return {
+      repository,
+      branch,
+      commitSha: `e2e_${randomBytes(12).toString('hex')}`,
+      treeSha: `e2e_tree_${randomBytes(8).toString('hex')}`,
+      parentSha: `e2e_parent_${Buffer.from(seed).toString('hex').slice(0, 16)}`,
+      files: files.map((file) => file.path),
+      e2e: true,
+    };
   }
 
   const [owner, repo] = repository.split('/');
