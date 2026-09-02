@@ -36,7 +36,7 @@ const server = http.createServer(async (req, res) => {
   const path = pathname(req);
   try {
     if (req.method === 'GET' && path === '/health') {
-      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.6.0', orchestrator: true, aiProvider: Boolean(process.env.OPENAI_API_KEY), buildProvider: Boolean(process.env.CODEMAGIC_API_TOKEN && process.env.CODEMAGIC_APP_ID) });
+      return json(res, 200, { ok: true, service: 'ai-app-factory-backend', version: '0.7.0', orchestrator: true, aiProvider: Boolean(process.env.OPENAI_API_KEY), buildProvider: Boolean(process.env.CODEMAGIC_API_TOKEN && process.env.CODEMAGIC_APP_ID), sourceProvider: Boolean(process.env.GITHUB_TOKEN) });
     }
     if (req.method === 'POST' && path === '/api/v1/licenses/issue') {
       if (process.env.ADMIN_API_KEY && req.headers['x-admin-api-key'] !== process.env.ADMIN_API_KEY) return json(res, 401, { error: 'UNAUTHORIZED' });
@@ -80,10 +80,13 @@ const server = http.createServer(async (req, res) => {
       if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });
       if (!['QA_PASSED', 'UPLOADED', 'ANALYZED'].includes(project.stage)) return json(res, 400, { error: 'BUILD_REQUIRES_QA' });
       const body = await readBody(req);
+      const environment = body.projectRoot ? { variables: { PROJECT_ROOT: String(body.projectRoot) } } : undefined;
       const build = await triggerCodemagicBuild({
         appId: body.appId,
         workflowId: body.workflowId,
         branch: body.branch || 'main',
+        environment,
+        labels: ['ai-app-factory', project.projectId],
       });
       project.execution = { ...(project.execution || {}), build: { ...build, status: 'queued', finished: false, failed: false, artifacts: [] }, status: 'BUILD_QUEUED', lastError: null };
       project.updatedAt = new Date().toISOString();
