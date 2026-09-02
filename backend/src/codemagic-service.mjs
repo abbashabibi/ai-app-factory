@@ -18,18 +18,21 @@ function requireConfig() {
   return token;
 }
 
-export async function triggerCodemagicBuild({ appId = process.env.CODEMAGIC_APP_ID, workflowId = process.env.CODEMAGIC_WORKFLOW_ID || 'android-debug', branch = 'main', fetchImpl = fetch } = {}) {
+export async function triggerCodemagicBuild({ appId = process.env.CODEMAGIC_APP_ID, workflowId = process.env.CODEMAGIC_WORKFLOW_ID || 'android-debug', branch = 'main', environment, labels, fetchImpl = fetch } = {}) {
   const token = requireConfig();
   if (!appId || !workflowId) throw new CodemagicError('CODEMAGIC_NOT_CONFIGURED', 'CODEMAGIC_NOT_CONFIGURED');
+  const body = { appId, workflowId, branch };
+  if (environment) body.environment = environment;
+  if (Array.isArray(labels) && labels.length) body.labels = labels;
   const response = await fetchImpl(`${CODEMAGIC_API}/builds`, {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ appId, workflowId, branch }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new CodemagicError(`CODEMAGIC_HTTP_${response.status}`);
   const data = await response.json();
   if (!data?.buildId) throw new CodemagicError('CODEMAGIC_BUILD_ID_MISSING');
-  return { buildId: data.buildId, appId, workflowId, branch };
+  return { buildId: data.buildId, appId, workflowId, branch, environment: environment || null, labels: labels || [] };
 }
 
 export async function getCodemagicBuildStatus(buildId, { fetchImpl = fetch } = {}) {
