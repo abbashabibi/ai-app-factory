@@ -1,24 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 type StageState = "done" | "active" | "waiting" | "error";
 type Stage = { key: string; title: string; state: StageState };
+type Project = { projectId: string; accountId: string; title: string; brief: string; stage: string; progress: number; createdAt: string; updatedAt: string; error: string | null };
 
-const stages: Stage[] = [
-  { key: "IDEA", title: "تحلیل ایده", state: "done" },
-  { key: "RESEARCHED", title: "تحقیق و نیازمندی‌ها", state: "done" },
-  { key: "SCRIPTED", title: "طراحی و معماری", state: "done" },
-  { key: "ASSETS_READY", title: "طراحی UI/UX", state: "active" },
-  { key: "RENDERED", title: "تولید کد", state: "waiting" },
-  { key: "QA_PASSED", title: "تست و QA", state: "waiting" },
-  { key: "UPLOADED", title: "Build / APK", state: "waiting" },
-  { key: "ANALYZED", title: "تحویل نهایی", state: "waiting" },
-];
+const stageDefs = [
+  ["IDEA", "تحلیل ایده"], ["RESEARCHED", "تحقیق و نیازمندی‌ها"], ["SCRIPTED", "طراحی و معماری"], ["ASSETS_READY", "طراحی UI/UX"],
+  ["RENDERED", "تولید کد"], ["QA_PASSED", "تست و QA"], ["UPLOADED", "Build / APK"], ["ANALYZED", "تحویل نهایی"],
+] as const;
 
 function StageIcon({ type }: { type: string }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-  const paths: Record<string, React.ReactNode> = {
+  const paths: Record<string, ReactNode> = {
     IDEA: <><path {...common} d="M12 3a6 6 0 0 0-3.4 10.95c.8.55 1.4 1.35 1.4 2.35h4c0-1 .6-1.8 1.4-2.35A6 6 0 0 0 12 3Z"/><path {...common} d="M10 20h4M10.5 17h3"/></>,
     RESEARCHED: <><circle {...common} cx="10.5" cy="10.5" r="5.5"/><path {...common} d="m15 15 4 4"/></>,
     SCRIPTED: <><path {...common} d="M6 3.5h9l3 3V20H6z"/><path {...common} d="M15 3.5V7h3M9 11h6M9 14h6M9 17h4"/></>,
@@ -31,25 +26,69 @@ function StageIcon({ type }: { type: string }) {
   return <svg className="stage-svg" viewBox="0 0 24 24" aria-hidden="true">{paths[type]}</svg>;
 }
 
+function buildStages(project: Project | null): Stage[] {
+  const current = project ? stageDefs.findIndex(([key]) => key === project.stage) : -1;
+  return stageDefs.map(([key, title], index) => ({ key, title, state: project?.error && index === current ? "error" : index < current ? "done" : index === current ? "active" : "waiting" }));
+}
+
 export default function Dashboard() {
-  const [progress, setProgress] = useState(46);
-  const [elapsed, setElapsed] = useState(0);
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+  const [project, setProject] = useState<Project | null>(null);
   const [command, setCommand] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [connection, setConnection] = useState<"live" | "offline">("offline");
+  const [elapsed, setElapsed] = useState(0);
+
+  const stages = useMemo(() => buildStages(project), [project]);
+  const progress = project?.progress ?? 0;
 
   useEffect(() => {
-    const timer = window.setInterval(() => setElapsed((v) => v + 1), 1000);
+    if (!project) return;
+    const started = new Date(project.createdAt).getTime();
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [project]);
 
-  const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  useEffect(() => {
+    if (!project?.projectId) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/v1/projects/${project.projectId}`, { cache: "no-store" });
+        if (!res.ok) throw new Error("offline");
+        setProject(await res.json());
+        setConnection("live");
+      } catch { setConnection("offline"); }
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => window.clearInterval(timer);
+  }, [apiBase, project?.projectId]);
+
+  async function startProject() {
+    if (!command.trim() || loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiBase}/api/v1/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId: "demo-account", title: command.trim(), brief: command.trim() }) });
+      if (!res.ok) throw new Error("API_ERROR");
+      setProject(await res.json());
+      setConnection("live");
+      setCommand("");
+    } catch { setConnection("offline"); }
+    finally { setLoading(false); }
+  }
+
+  const time = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  const active = stages.find((s) => s.state === "active");
 
   return (
     <main className="shell">
       <aside className="sidebar"><div className="brand">✦ Abbas AI Factory</div><nav className="nav"><a className="active" href="#dashboard">داشبورد</a><a href="#projects">پروژه‌ها</a><a href="#videos">ویدئوها</a><a href="#channels">کانال‌های YouTube</a><a href="#analytics">تحلیل‌ها</a><a href="#license">لایسنس</a><a href="#settings">تنظیمات</a><a href="#help">راهنما</a></nav></aside>
       <section className="main" id="dashboard">
-        <header className="top"><div><div className="eyebrow">AI WORKSPACE / LIVE MONITOR</div><h1>مرکز فرمان هوش مصنوعی</h1></div><span className="badge">● LIVE · LIFETIME ACTIVE</span></header>
+        <header className="top"><div><div className="eyebrow">AI WORKSPACE / LIVE MONITOR</div><h1>مرکز فرمان هوش مصنوعی</h1></div><span className={`badge ${connection === "live" ? "live" : "offline"}`}>● {connection === "live" ? "LIVE" : "OFFLINE"} · LIFETIME ACTIVE</span></header>
         <section className="monitor card full">
-          <div className="monitor-head"><div><div className="label">MONITORING</div><h2>مسیر ساخت پروژه</h2></div><div className="progress-number">{progress}%</div></div>
+          <div className="monitor-head"><div><div className="label">MONITORING</div><h2>{project?.title || "پروژه جدید"}</h2></div><div className="progress-number">{progress}%</div></div>
           <div className="progress"><span style={{ width: `${progress}%` }} /></div>
           <div className="stage-flow">
             {stages.map((stage, index) => <div className="stage-wrap" key={stage.key}>
@@ -57,12 +96,15 @@ export default function Dashboard() {
               {index < stages.length - 1 && <div className={`flow-line ${stage.state === "done" ? "done" : ""}`} />}
             </div>)}
           </div>
-          <div className="activity"><div><b>🔵 فعالیت فعلی Agent</b><p>در حال طراحی رابط کاربری و آماده‌سازی ساختار صفحات…</p></div><div className="metrics"><span>⏱ {time}</span><span>📁 17 فایل</span><span>🧪 12/15 تست</span><span>⚠️ 0 خطا</span></div></div>
+          <div className="activity"><div><b>🔵 فعالیت فعلی Agent</b><p>{project ? `در حال پردازش مرحله «${active?.title || project.stage}» و همگام‌سازی وضعیت پروژه…` : "هنوز پروژه‌ای اجرا نشده است؛ یک فرمان جدید وارد کنید."}</p></div><div className="metrics"><span>⏱ {time}</span><span>📁 وضعیت Backend</span><span>🔄 Poll: 3s</span><span>⚠️ {project?.error || "0 خطا"}</span></div></div>
         </section>
         <div className="grid">
-          <section className="card wide"><div className="label">فرمان هوشمند</div><h2>چه چیزی می‌خواهید بسازید؟</h2><div className="command"><input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="مثلاً یک پروژه YouTube درباره آموزش آشپزی بساز..." /><button className="primary" onClick={() => setProgress((v) => Math.min(100, v + 5))}>شروع پروژه</button></div></section>
-          <section className="card"><div className="label">پروژه‌های فعال</div><div className="value">3</div></section><section className="card"><div className="label">ویدئوهای تولیدشده</div><div className="value">24</div></section><section className="card"><div className="label">وضعیت YouTube</div><div className="value">متصل</div></section>
-          <section className="card" id="license"><div className="label">License Center</div><h3>LIFETIME</h3><p>دستگاه‌ها: 1 / 2<br />کانال‌ها: 1 / 1</p></section><section className="card full"><div className="label">شروع سریع</div><p>ورود → فعال‌سازی لایسنس → اتصال YouTube → ساخت پروژه → تولید محتوا → کنترل کیفیت → بررسی → انتشار</p></section>
+          <section className="card wide"><div className="label">فرمان هوشمند</div><h2>چه چیزی می‌خواهید بسازید؟</h2><div className="command"><input value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && startProject()} placeholder="مثلاً یک پروژه YouTube درباره آموزش آشپزی بساز..." /><button className="primary" disabled={loading || !command.trim()} onClick={startProject}>{loading ? "در حال شروع…" : "شروع پروژه"}</button></div></section>
+          <section className="card"><div className="label">مرحله فعلی</div><div className="value">{active?.title || (project ? "تکمیل" : "—")}</div></section>
+          <section className="card"><div className="label">Project ID</div><div className="value small-value">{project?.projectId || "—"}</div></section>
+          <section className="card"><div className="label">وضعیت اتصال</div><div className="value">{connection === "live" ? "زنده" : "قطع"}</div></section>
+          <section className="card" id="license"><div className="label">License Center</div><h3>LIFETIME</h3><p>دستگاه‌ها: 1 / 2<br />کانال‌ها: 1 / 1</p></section>
+          <section className="card full"><div className="label">منطق مانیتورینگ</div><p>Backend وضعیت پروژه را ثبت می‌کند → Dashboard هر ۳ ثانیه وضعیت را می‌خواند → آیکن مرحله فعال می‌شود → با تغییر Stage، مرحله قبلی سبز و مرحله بعدی روشن می‌شود.</p></section>
         </div>
       </section>
     </main>
