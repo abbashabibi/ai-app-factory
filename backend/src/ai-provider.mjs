@@ -20,6 +20,19 @@ function extractOutput(data) {
 }
 
 export async function generateAIPlan({ title, brief, stage, model = DEFAULT_MODEL, fetchImpl = fetch }) {
+  if (process.env.APP_FACTORY_E2E_MODE === '1') {
+    return {
+      objective: `Build a production-ready Android app for ${title}`,
+      deliverables: ['requirements', 'architecture', 'UI/UX specification', 'buildable Android source'],
+      acceptanceCriteria: ['source manifest is valid', 'QA gate passes', 'cloud build reaches finished state', 'APK artifact is available'],
+      risks: ['provider credentials must be configured in production', 'generated code must pass real compilation'],
+      nextAction: 'Generate the source manifest and run the QA/build pipeline.',
+      e2e: true,
+      stage,
+      brief,
+    };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new AIProviderError('AI_PROVIDER_NOT_CONFIGURED', 'AI_PROVIDER_NOT_CONFIGURED');
 
