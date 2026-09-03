@@ -14,7 +14,7 @@ const pool = process.env.DATABASE_URL ? new Pool({
   connectionTimeoutMillis: 10000,
   ssl: postgresSsl()
 }) : null;
-const memory = { accounts: new Map(), projects: new Map() };
+const memory = { accounts: new Map(), projects: new Map(), jobs: new Map() };
 
 export function storageMode() { return pool ? 'postgres' : 'memory'; }
 
@@ -23,6 +23,8 @@ export async function initStorage() {
   await pool.query(`CREATE TABLE IF NOT EXISTS accounts (account_id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL DEFAULT '', password_hash TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS projects (project_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL, brief TEXT NOT NULL DEFAULT '', state JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_account_id_idx ON projects(account_id)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS execution_jobs (job_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, account_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, current_stage TEXT NOT NULL, attempt INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, error TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS execution_jobs_project_id_idx ON execution_jobs(project_id)`);
 }
 
 export async function saveAccount(account) {
@@ -86,3 +88,7 @@ export function createPersistentProjectMap() {
 }
 
 export async function closeStorage() { if (pool) await pool.end(); }
+
+export async function saveJob(job) { if (!pool) { memory.jobs.set(job.jobId, structuredClone(job)); return job; } await pool.query(`INSERT INTO execution_jobs(job_id,project_id,account_id,kind,state,current_stage,attempt,created_at,updated_at,started_at,finished_at,error,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(job_id) DO UPDATE SET state=EXCLUDED.state,current_stage=EXCLUDED.current_stage,attempt=EXCLUDED.attempt,updated_at=EXCLUDED.updated_at,started_at=EXCLUDED.started_at,finished_at=EXCLUDED.finished_at,error=EXCLUDED.error,metadata=EXCLUDED.metadata`, [job.jobId,job.projectId,job.accountId,job.kind,job.state,job.currentStage,job.attempt,job.createdAt,job.updatedAt,job.startedAt,job.finishedAt,job.error,JSON.stringify(job.metadata||{})]); return job; }
+export async function findJobById(jobId) { if (!pool) return memory.jobs.get(jobId) || null; const { rows }=await pool.query(`SELECT job_id AS "jobId",project_id AS "projectId",account_id AS "accountId",kind,state,current_stage AS "currentStage",attempt,created_at AS "createdAt",updated_at AS "updatedAt",started_at AS "startedAt",finished_at AS "finishedAt",error,metadata FROM execution_jobs WHERE job_id=$1 LIMIT 1`,[jobId]); return rows[0]||null; }
+export async function listJobs(accountId) { if (!pool) return [...memory.jobs.values()].filter(j=>j.accountId===accountId); const { rows }=await pool.query(`SELECT job_id AS "jobId",project_id AS "projectId",account_id AS "accountId",kind,state,current_stage AS "currentStage",attempt,created_at AS "createdAt",updated_at AS "updatedAt",started_at AS "startedAt",finished_at AS "finishedAt",error,metadata FROM execution_jobs WHERE account_id=$1 ORDER BY updated_at DESC`,[accountId]); return rows; }
