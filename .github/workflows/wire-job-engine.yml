@@ -1,0 +1,73 @@
+name: Wire durable job engine
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('backend/src/storage-service.mjs')
+          s=p.read_text()
+          marker="  await pool.query(`CREATE INDEX IF NOT EXISTS projects_account_id_idx ON projects(account_id)`);"
+          insert="""  await pool.query(`CREATE TABLE IF NOT EXISTS execution_jobs (job_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, account_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, current_stage TEXT NOT NULL, attempt INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, error TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb)`);\n  await pool.query(`CREATE INDEX IF NOT EXISTS execution_jobs_project_id_idx ON execution_jobs(project_id)`);\n"""
+          if 'CREATE TABLE IF NOT EXISTS execution_jobs' not in s:
+              s=s.replace(marker, marker+'\n'+insert)
+          s=s.replace("const memory = { accounts: new Map(), projects: new Map() };", "const memory = { accounts: new Map(), projects: new Map(), jobs: new Map() };")
+          s += """
+export async function saveJob(job) {
+  if (!pool) { memory.jobs.set(job.jobId, structuredClone(job)); return job; }
+  await pool.query(`INSERT INTO execution_jobs(job_id,project_id,account_id,kind,state,current_stage,attempt,created_at,updated_at,started_at,finished_at,error,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(job_id) DO UPDATE SET state=EXCLUDED.state,current_stage=EXCLUDED.current_stage,attempt=EXCLUDED.attempt,updated_at=EXCLUDED.updated_at,started_at=EXCLUDED.started_at,finished_at=EXCLUDED.finished_at,error=EXCLUDED.error,metadata=EXCLUDED.metadata`, [job.jobId,job.projectId,job.accountId,job.kind,job.state,job.currentStage,job.attempt,job.createdAt,job.updatedAt,job.startedAt,job.finishedAt,job.error,JSON.stringify(job.metadata||{})]);
+  return job;
+}
+export async function findJobById(jobId) {
+  if (!pool) return memory.jobs.get(jobId) || null;
+  const { rows } = await pool.query(`SELECT job_id AS "jobId",project_id AS "projectId",account_id AS "accountId",kind,state,current_stage AS "currentStage",attempt,created_at AS "createdAt",updated_at AS "updatedAt",started_at AS "startedAt",finished_at AS "finishedAt",error,metadata FROM execution_jobs WHERE job_id=$1 LIMIT 1`, [jobId]);
+  return rows[0] || null;
+}
+export async function listJobs(accountId) {
+  if (!pool) return [...memory.jobs.values()].filter(j=>j.accountId===accountId);
+  const { rows } = await pool.query(`SELECT job_id AS "jobId",project_id AS "projectId",account_id AS "accountId",kind,state,current_stage AS "currentStage",attempt,created_at AS "createdAt",updated_at AS "updatedAt",started_at AS "startedAt",finished_at AS "finishedAt",error,metadata FROM execution_jobs WHERE account_id=$1 ORDER BY updated_at DESC`, [accountId]);
+  return rows;
+}
+"""
+          p.write_text(s)
+
+          p=Path('backend/src/server.mjs')
+          s=p.read_text()
+          old="import { createPersistentProjectMap, hydrateProjects, initStorage, saveAccount, findAccountByEmail, findAccountById, storageMode } from './storage-service.mjs';"
+          new="import { createPersistentProjectMap, hydrateProjects, initStorage, saveAccount, findAccountByEmail, findAccountById, storageMode, saveJob, findJobById, listJobs } from './storage-service.mjs';\nimport { createJob, startJob, updateJobStage, finishJob } from './job-service.mjs';"
+          s=s.replace(old,new)
+          marker="    if (req.method === 'POST' && path === '/api/v1/projects') {"
+          routes="""    if (req.method === 'POST' && path === '/api/v1/jobs') {\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      const body = await readBody(req);\n      const project = projects.get(body.projectId);\n      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });\n      if (account && project.accountId !== account.accountId) return json(res, 403, { error: 'FORBIDDEN' });\n      const job = createJob({ projectId: project.projectId, accountId: project.accountId, kind: body.kind || 'factory' });\n      await saveJob(job);\n      return json(res, 201, job);\n    }\n    const jobMatch = path.match(/^\\/api\\/v1\\/jobs\\/([^/]+)$/);\n    if (req.method === 'GET' && jobMatch) {\n      const job = await findJobById(jobMatch[1]);\n      if (!job) return json(res, 404, { error: 'INVALID_JOB' });\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      if (account && job.accountId !== account.accountId) return json(res, 403, { error: 'FORBIDDEN' });\n      return json(res, 200, job);\n    }\n    if (req.method === 'GET' && path === '/api/v1/jobs') {\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      return json(res, 200, await listJobs(account?.accountId || 'demo-account'));\n    }\n    const jobStartMatch = path.match(/^\\/api\\/v1\\/jobs\\/([^/]+)\\/start$/);\n    if (req.method === 'POST' && jobStartMatch) {\n      const job = await findJobById(jobStartMatch[1]);\n      if (!job) return json(res, 404, { error: 'INVALID_JOB' });\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      if (account && job.accountId !== account.accountId) return json(res, 403, { error: 'FORBIDDEN' });\n      startJob(job); await saveJob(job); return json(res, 200, job);\n    }\n    const jobStageMatch = path.match(/^\\/api\\/v1\\/jobs\\/([^/]+)\\/stage$/);\n    if (req.method === 'POST' && jobStageMatch) {\n      const job = await findJobById(jobStageMatch[1]);\n      if (!job) return json(res, 404, { error: 'INVALID_JOB' });\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      if (account && job.accountId !== account.accountId) return json(res, 403, { error: 'FORBIDDEN' });\n      updateJobStage(job, (await readBody(req)).stage); await saveJob(job); return json(res, 200, job);\n    }\n    const jobFinishMatch = path.match(/^\\/api\\/v1\\/jobs\\/([^/]+)\\/finish$/);\n    if (req.method === 'POST' && jobFinishMatch) {\n      const job = await findJobById(jobFinishMatch[1]);\n      if (!job) return json(res, 404, { error: 'INVALID_JOB' });\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      if (account && job.accountId !== account.accountId) return json(res, 403, { error: 'FORBIDDEN' });\n      const body = await readBody(req); finishJob(job, body.state, body.error || null); await saveJob(job); return json(res, 200, job);\n    }\n"""
+          if "path === '/api/v1/jobs'" not in s:
+              s=s.replace(marker, routes+marker)
+          p.write_text(s)
+          PY
+      - name: Verify
+        run: |
+          cd backend
+          npm install
+          npm test
+      - name: Commit and remove patch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add backend/src/storage-service.mjs backend/src/server.mjs
+          git commit -m "feat: persist and expose execution jobs" || true
+          git rm .github/workflows/wire-job-engine.yml
+          git commit -m "chore: remove one-shot wiring workflow"
+          git push
