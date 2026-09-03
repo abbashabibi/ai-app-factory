@@ -1,6 +1,19 @@
 import { Pool } from 'pg';
 
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: Number(process.env.DB_POOL_MAX || 10), idleTimeoutMillis: 30000, connectionTimeoutMillis: 10000, ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false } }) : null;
+function postgresSsl() {
+  if (process.env.DATABASE_SSL === 'disable') return false;
+  const ca = process.env.DATABASE_SSL_CA;
+  if (ca) return { rejectUnauthorized: true, ca };
+  return { rejectUnauthorized: true };
+}
+
+const pool = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.DB_POOL_MAX || 10),
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  ssl: postgresSsl()
+}) : null;
 const memory = { accounts: new Map(), projects: new Map() };
 
 export function storageMode() { return pool ? 'postgres' : 'memory'; }
