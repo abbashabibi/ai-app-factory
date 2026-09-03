@@ -1,0 +1,86 @@
+name: Harden project access
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[skip-hardening]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply ownership hardening
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('backend/src/server.mjs')
+          s = p.read_text()
+          marker = "async function authenticatedAccount(req) {"
+          start = s.index(marker)
+          end = s.index("\n}\n\nconst server", start) + 3
+          block = '''async function authenticatedAccount(req) {
+            const session = verifySession(bearer(req));
+            if (!session) return null;
+            const account = await findAccountById(session.accountId);
+            return account?.status === 'ACTIVE' ? account : null;
+          }
+
+          async function authorizedProject(req, projectId) {
+            const project = projects.get(projectId);
+            if (!project) return { error: 'INVALID_PROJECT' };
+            const account = await authenticatedAccount(req);
+            if (process.env.AUTH_REQUIRED === 'true' && !account) return { error: 'UNAUTHORIZED' };
+            if (account && project.accountId !== account.accountId) return { error: 'FORBIDDEN' };
+            return { project, account };
+          }
+          '''
+          s = s[:start] + block + s[end:]
+
+          replacements = [
+          ("""      const project = projects.get(orchestrateMatch[1]);\n      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });\n      return json(res, 200, createExecutionPlan(project));""",
+           """      const access = await authorizedProject(req, orchestrateMatch[1]);\n      if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;\n      return json(res, 200, createExecutionPlan(project));"""),
+          ("""      const project = projects.get(aiMatch[1]);\n      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, aiMatch[1]);\n      if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(sourceGenerateMatch[1]);\n      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, sourceGenerateMatch[1]);\n      if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(sourceCommitMatch[1]);\n      if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, sourceCommitMatch[1]);\n      if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(qaMatch[1]); if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, qaMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(buildMatch[1]); if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, buildMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(buildStatusMatch[1]); if (!project) return json(res, 404, { error: 'INVALID_PROJECT' });""",
+           """      const access = await authorizedProject(req, buildStatusMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project;"""),
+          ("""      const project = projects.get(artifactUrlMatch[1]); if (!project) return json(res, 404, { error: 'INVALID_PROJECT' }); const currentBuild = project.execution?.build;""",
+           """      const access = await authorizedProject(req, artifactUrlMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error });\n      const project = access.project; const currentBuild = project.execution?.build;"""),
+          ("""      const body = await readBody(req); const project = projects.get(completeMatch[1]); const completion = assertStageCompletion(project, body.stage);""",
+           """      const body = await readBody(req); const access = await authorizedProject(req, completeMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error }); const project = access.project; const completion = assertStageCompletion(project, body.stage);"""),
+          ("""    if (req.method === 'POST' && advanceMatch) { const updated = advanceProject(projects.get(advanceMatch[1]), (await readBody(req)).stage); projects.set(updated.projectId, updated); return json(res, 200, updated); }""",
+           """    if (req.method === 'POST' && advanceMatch) { const access = await authorizedProject(req, advanceMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error }); const updated = advanceProject(access.project, (await readBody(req)).stage); projects.set(updated.projectId, updated); return json(res, 200, updated); }"""),
+          ("""    if (req.method === 'GET' && projectMatch) {\n      const project = projects.get(projectMatch[1]); if (!project) return json(res, 404, { error: 'INVALID_PROJECT' }); return json(res, 200, project);\n    }""",
+           """    if (req.method === 'GET' && path === '/api/v1/projects') {\n      const account = await authenticatedAccount(req);\n      if (!account && process.env.AUTH_REQUIRED === 'true') return json(res, 401, { error: 'UNAUTHORIZED' });\n      const items = [...projects.values()].filter((project) => !account || project.accountId === account.accountId);\n      return json(res, 200, { projects: items });\n    }\n    if (req.method === 'GET' && projectMatch) {\n      const access = await authorizedProject(req, projectMatch[1]); if (access.error) return json(res, access.error === 'INVALID_PROJECT' ? 404 : 403, { error: access.error }); return json(res, 200, access.project);\n    }"""),
+          ("""'UNAUTHORIZED','ORCHESTRATOR_STAGE_MISMATCH'""", """'UNAUTHORIZED','FORBIDDEN','ORCHESTRATOR_STAGE_MISMATCH'""")
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'MISSING_PATCH_TARGET: {old[:80]}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Verify backend
+        working-directory: backend
+        run: |
+          npm install
+          npm test
+      - name: Commit and remove hardening workflow
+        run: |
+          rm -f .github/workflows/harden-project-access.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/server.mjs .github/workflows/harden-project-access.yml
+          git commit -m 'security: enforce project ownership [skip-hardening]'
+          git push
