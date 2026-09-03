@@ -8,7 +8,8 @@ import { runSourceQA } from './qa-service.mjs';
 import { triggerCodemagicBuild, getCodemagicBuildStatus, createCodemagicPublicArtifactUrl } from './codemagic-service.mjs';
 import { commitFiles } from './github-service.mjs';
 import { createAccountRecord, hashPassword, normalizeEmail, publicAccount, signSession, verifyPassword, verifySession } from './auth-service.mjs';
-import { createPersistentProjectMap, hydrateProjects, initStorage, saveAccount, findAccountByEmail, findAccountById, storageMode } from './storage-service.mjs';
+import { createPersistentProjectMap, hydrateProjects, initStorage, saveAccount, findAccountByEmail, findAccountById, storageMode, saveJob, findJobById, listJobs } from './storage-service.mjs';
+import { createJob, startJob, updateJobStage, finishJob } from './job-service.mjs';
 
 const licenses = new Map();
 const projects = createPersistentProjectMap();
@@ -90,6 +91,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       return json(res, 200, activateLicense(licenses.get(hashLicenseKey(body.licenseKey)), body));
     }
+    if (req.method === 'POST' && path === '/api/v1/jobs') { const account=await authenticatedAccount(req); if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'}); const body=await readBody(req); const project=projects.get(body.projectId); if(!project)return json(res,404,{error:'INVALID_PROJECT'}); if(account&&project.accountId!==account.accountId)return json(res,403,{error:'FORBIDDEN'}); const job=createJob({projectId:project.projectId,accountId:project.accountId,kind:body.kind||'factory'}); await saveJob(job); return json(res,201,job); }
+    const jobMatch=path.match(/^\/api\/v1\/jobs\/([^/]+)$/); if(req.method==='GET'&&jobMatch){const job=await findJobById(jobMatch[1]);if(!job)return json(res,404,{error:'INVALID_JOB'});const account=await authenticatedAccount(req);if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'});if(account&&job.accountId!==account.accountId)return json(res,403,{error:'FORBIDDEN'});return json(res,200,job);}
+    if(req.method==='GET'&&path==='/api/v1/jobs'){const account=await authenticatedAccount(req);if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'});return json(res,200,await listJobs(account?.accountId||'demo-account'));}
+    const jobStart=path.match(/^\/api\/v1\/jobs\/([^/]+)\/start$/); if(req.method==='POST'&&jobStart){const job=await findJobById(jobStart[1]);if(!job)return json(res,404,{error:'INVALID_JOB'});const account=await authenticatedAccount(req);if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'});if(account&&job.accountId!==account.accountId)return json(res,403,{error:'FORBIDDEN'});startJob(job);await saveJob(job);return json(res,200,job);}
+    const jobStage=path.match(/^\/api\/v1\/jobs\/([^/]+)\/stage$/); if(req.method==='POST'&&jobStage){const job=await findJobById(jobStage[1]);if(!job)return json(res,404,{error:'INVALID_JOB'});const account=await authenticatedAccount(req);if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'});if(account&&job.accountId!==account.accountId)return json(res,403,{error:'FORBIDDEN'});updateJobStage(job,(await readBody(req)).stage);await saveJob(job);return json(res,200,job);}
+    const jobFinish=path.match(/^\/api\/v1\/jobs\/([^/]+)\/finish$/); if(req.method==='POST'&&jobFinish){const job=await findJobById(jobFinish[1]);if(!job)return json(res,404,{error:'INVALID_JOB'});const account=await authenticatedAccount(req);if(!account&&process.env.AUTH_REQUIRED==='true')return json(res,401,{error:'UNAUTHORIZED'});if(account&&job.accountId!==account.accountId)return json(res,403,{error:'FORBIDDEN'});const body=await readBody(req);finishJob(job,body.state,body.error||null);await saveJob(job);return json(res,200,job);}
     if (req.method === 'POST' && path === '/api/v1/projects') {
       const body = await readBody(req);
       const account = await authenticatedAccount(req);
